@@ -10,7 +10,7 @@ Early, built in public.
 
 | Part | State |
 | :- | :- |
-| `MilestoneEscrow` contract | Hardened: deadlines per milestone, 32 tests passing (unit, fuzz, invariants) |
+| `MilestoneEscrow` contract | Hardened: deadlines per milestone, 36 tests passing (unit, fuzz, invariants) |
 | Arc testnet deployment | Not yet |
 | Web app | Not yet |
 | Arc mainnet deployment | Not yet |
