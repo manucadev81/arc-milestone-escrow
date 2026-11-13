@@ -40,7 +40,7 @@ Roles in a deal:
 - **Payees** receive their share of every released milestone. The client cannot be a payee, and no address can appear twice.
 - **Arbiter** is optional. It can release or refund any open milestone when the two sides disagree.
 
-Every milestone carries a deadline and a `bytes32` hash of its specification. Before the deadline, the client can only move money toward the team and the lead can only move money back to the client, so a disagreement stays locked until the arbiter decides or one side concedes. Once the deadline passes, the client regains the option to refund, so no budget can stay locked forever.
+Every milestone carries a deadline and a `bytes32` hash of its specification. Before the deadline, the client can only move money toward the team and the lead can only move money back to the client, so a disagreement stays locked until the arbiter decides or one side concedes. Once the deadline passes, the client regains the option to refund, so no budget can stay locked forever. The deadline is a hard cutoff: a release and a client refund of an expired milestone race, and whichever lands first wins, even when an arbiter is set. Agree on dates with slack, and release on time.
 
 ## Design choices for Arc
 

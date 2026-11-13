@@ -1,4 +1,4 @@
-pragma solidity ^0.8.24;
+pragma solidity 0.8.28;
 
 interface IERC20 {
     function transfer(address to, uint256 amount) external returns (bool);
@@ -182,13 +182,14 @@ contract MilestoneEscrow {
     function _checkTeam(address arbiter, address[] calldata payees, uint16[] calldata sharesBps) private view {
         uint256 payeeCount = payees.length;
         if (payeeCount == 0 || payeeCount > MAX_PAYEES || payeeCount != sharesBps.length) revert InvalidPayees();
-        if (arbiter == msg.sender) revert InvalidArbiter();
+        if (arbiter == msg.sender || arbiter == address(this) || arbiter == address(token)) revert InvalidArbiter();
 
         uint256 shareSum;
         for (uint256 i; i < payeeCount; ++i) {
             address payee = payees[i];
             if (payee == address(0)) revert ZeroAddress();
             if (payee == msg.sender) revert ClientCannotBePayee();
+            if (payee == address(this) || payee == address(token)) revert InvalidPayees();
             if (payee == arbiter) revert InvalidArbiter();
             for (uint256 j; j < i; ++j) {
                 if (payees[j] == payee) revert DuplicatePayee();
@@ -209,10 +210,11 @@ contract MilestoneEscrow {
         if (deadlines.length != milestoneCount || specHashes.length != milestoneCount) revert InvalidMilestones();
         for (uint256 i; i < milestoneCount; ++i) {
             if (amounts[i] == 0) revert InvalidMilestones();
+            if (amounts[i] > MAX_TOTAL) revert TotalTooLarge();
             if (deadlines[i] <= block.timestamp) revert InvalidDeadline();
             total += amounts[i];
+            if (total > MAX_TOTAL) revert TotalTooLarge();
         }
-        if (total > MAX_TOTAL) revert TotalTooLarge();
     }
 
     function _emitCreated(uint256 dealId, Deal storage deal, uint256 total) private {

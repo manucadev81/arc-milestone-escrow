@@ -1,4 +1,4 @@
-pragma solidity ^0.8.24;
+pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {MilestoneEscrow} from "../src/MilestoneEscrow.sol";
@@ -366,6 +366,21 @@ contract MilestoneEscrowTest is Test {
         vm.expectRevert(MilestoneEscrow.DuplicatePayee.selector);
         escrow.createDeal(arbiter, payees, shares, _amounts(), _deadlines(), _specs());
 
+        payees[1] = address(escrow);
+        vm.expectRevert(MilestoneEscrow.InvalidPayees.selector);
+        escrow.createDeal(arbiter, payees, shares, _amounts(), _deadlines(), _specs());
+
+        payees[1] = address(usdc);
+        vm.expectRevert(MilestoneEscrow.InvalidPayees.selector);
+        escrow.createDeal(arbiter, payees, shares, _amounts(), _deadlines(), _specs());
+
+        payees[1] = dev;
+        vm.expectRevert(MilestoneEscrow.InvalidArbiter.selector);
+        escrow.createDeal(address(escrow), payees, shares, _amounts(), _deadlines(), _specs());
+
+        vm.expectRevert(MilestoneEscrow.InvalidArbiter.selector);
+        escrow.createDeal(address(usdc), payees, shares, _amounts(), _deadlines(), _specs());
+
         payees[1] = dev;
         shares[1] = 0;
         shares[0] = 8000;
@@ -437,9 +452,15 @@ contract MilestoneEscrowTest is Test {
         deadlines[1] = START + WEEK;
         bytes32[] memory specs = new bytes32[](2);
 
-        vm.prank(client);
+        vm.startPrank(client);
         vm.expectRevert(MilestoneEscrow.TotalTooLarge.selector);
         escrow.createDeal(arbiter, payees, shares, amounts, deadlines, specs);
+
+        amounts[0] = type(uint256).max;
+        amounts[1] = type(uint256).max;
+        vm.expectRevert(MilestoneEscrow.TotalTooLarge.selector);
+        escrow.createDeal(arbiter, payees, shares, amounts, deadlines, specs);
+        vm.stopPrank();
     }
 
     function test_ConstructorRejectsZeroToken() public {

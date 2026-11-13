@@ -1,4 +1,4 @@
-pragma solidity ^0.8.24;
+pragma solidity 0.8.28;
 
 import {Script} from "forge-std/Script.sol";
 import {MilestoneEscrow} from "../src/MilestoneEscrow.sol";
