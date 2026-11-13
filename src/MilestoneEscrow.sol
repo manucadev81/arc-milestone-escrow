@@ -18,12 +18,15 @@ contract MilestoneEscrow {
         address[] payees;
         uint16[] sharesBps;
         uint256[] amounts;
+        uint64[] deadlines;
+        bytes32[] specHashes;
         MilestoneState[] states;
     }
 
     uint256 public constant BPS = 10_000;
     uint256 public constant MAX_PAYEES = 20;
     uint256 public constant MAX_MILESTONES = 50;
+    uint256 public constant MAX_TOTAL = type(uint128).max;
 
     IERC20 public immutable token;
     uint256 public dealCount;
@@ -31,7 +34,16 @@ contract MilestoneEscrow {
     mapping(uint256 => Deal) private deals;
 
     event DealCreated(
-        uint256 indexed dealId, address indexed client, address indexed lead, address arbiter, uint256 total
+        uint256 indexed dealId,
+        address indexed client,
+        address indexed lead,
+        address arbiter,
+        uint256 total,
+        address[] payees,
+        uint16[] sharesBps,
+        uint256[] amounts,
+        uint64[] deadlines,
+        bytes32[] specHashes
     );
     event MilestoneReleased(uint256 indexed dealId, uint256 indexed index, uint256 amount, address indexed by);
     event MilestoneRefunded(uint256 indexed dealId, uint256 indexed index, uint256 amount, address indexed by);
@@ -39,12 +51,17 @@ contract MilestoneEscrow {
 
     error ZeroAddress();
     error InvalidPayees();
+    error ClientCannotBePayee();
+    error DuplicatePayee();
     error InvalidMilestones();
+    error InvalidDeadline();
+    error TotalTooLarge();
     error InvalidShares();
     error InvalidArbiter();
     error DealNotFound();
     error MilestoneNotFound();
     error MilestoneAlreadySettled();
+    error MilestoneNotExpired();
     error NotAuthorized();
     error NothingToWithdraw();
     error TransferFailed();
@@ -58,10 +75,12 @@ contract MilestoneEscrow {
         address arbiter,
         address[] calldata payees,
         uint16[] calldata sharesBps,
-        uint256[] calldata amounts
+        uint256[] calldata amounts,
+        uint64[] calldata deadlines,
+        bytes32[] calldata specHashes
     ) external returns (uint256 dealId) {
         _checkTeam(arbiter, payees, sharesBps);
-        uint256 total = _checkMilestones(amounts);
+        uint256 total = _checkMilestones(amounts, deadlines, specHashes);
 
         dealId = ++dealCount;
         Deal storage deal = deals[dealId];
@@ -70,11 +89,13 @@ contract MilestoneEscrow {
         deal.payees = payees;
         deal.sharesBps = sharesBps;
         deal.amounts = amounts;
+        deal.deadlines = deadlines;
+        deal.specHashes = specHashes;
         for (uint256 i; i < amounts.length; ++i) {
             deal.states.push(MilestoneState.Funded);
         }
 
-        emit DealCreated(dealId, msg.sender, payees[0], arbiter, total);
+        _emitCreated(dealId, deal, total);
 
         if (!token.transferFrom(msg.sender, address(this), total)) revert TransferFailed();
     }
@@ -98,7 +119,12 @@ contract MilestoneEscrow {
 
     function refund(uint256 dealId, uint256 index) external {
         Deal storage deal = _deal(dealId);
-        if (msg.sender != deal.payees[0] && msg.sender != deal.arbiter) revert NotAuthorized();
+        if (msg.sender == deal.client) {
+            if (index >= deal.deadlines.length) revert MilestoneNotFound();
+            if (block.timestamp <= deal.deadlines[index]) revert MilestoneNotExpired();
+        } else if (msg.sender != deal.payees[0] && msg.sender != deal.arbiter) {
+            revert NotAuthorized();
+        }
         uint256 amount = _settle(deal, index, MilestoneState.Refunded);
 
         claimable[deal.client] += amount;
@@ -125,11 +151,32 @@ contract MilestoneEscrow {
             address[] memory payees,
             uint16[] memory sharesBps,
             uint256[] memory amounts,
+            uint64[] memory deadlines,
+            bytes32[] memory specHashes,
             MilestoneState[] memory states
         )
     {
         Deal storage deal = _deal(dealId);
-        return (deal.client, deal.arbiter, deal.payees, deal.sharesBps, deal.amounts, deal.states);
+        return (
+            deal.client,
+            deal.arbiter,
+            deal.payees,
+            deal.sharesBps,
+            deal.amounts,
+            deal.deadlines,
+            deal.specHashes,
+            deal.states
+        );
+    }
+
+    function getMilestone(uint256 dealId, uint256 index)
+        external
+        view
+        returns (uint256 amount, uint64 deadline, bytes32 specHash, MilestoneState state)
+    {
+        Deal storage deal = _deal(dealId);
+        if (index >= deal.amounts.length) revert MilestoneNotFound();
+        return (deal.amounts[index], deal.deadlines[index], deal.specHashes[index], deal.states[index]);
     }
 
     function _checkTeam(address arbiter, address[] calldata payees, uint16[] calldata sharesBps) private view {
@@ -139,21 +186,48 @@ contract MilestoneEscrow {
 
         uint256 shareSum;
         for (uint256 i; i < payeeCount; ++i) {
-            if (payees[i] == address(0)) revert ZeroAddress();
-            if (payees[i] == arbiter) revert InvalidArbiter();
+            address payee = payees[i];
+            if (payee == address(0)) revert ZeroAddress();
+            if (payee == msg.sender) revert ClientCannotBePayee();
+            if (payee == arbiter) revert InvalidArbiter();
+            for (uint256 j; j < i; ++j) {
+                if (payees[j] == payee) revert DuplicatePayee();
+            }
             if (sharesBps[i] == 0) revert InvalidShares();
             shareSum += sharesBps[i];
         }
         if (shareSum != BPS) revert InvalidShares();
     }
 
-    function _checkMilestones(uint256[] calldata amounts) private pure returns (uint256 total) {
+    function _checkMilestones(uint256[] calldata amounts, uint64[] calldata deadlines, bytes32[] calldata specHashes)
+        private
+        view
+        returns (uint256 total)
+    {
         uint256 milestoneCount = amounts.length;
         if (milestoneCount == 0 || milestoneCount > MAX_MILESTONES) revert InvalidMilestones();
+        if (deadlines.length != milestoneCount || specHashes.length != milestoneCount) revert InvalidMilestones();
         for (uint256 i; i < milestoneCount; ++i) {
             if (amounts[i] == 0) revert InvalidMilestones();
+            if (deadlines[i] <= block.timestamp) revert InvalidDeadline();
             total += amounts[i];
         }
+        if (total > MAX_TOTAL) revert TotalTooLarge();
+    }
+
+    function _emitCreated(uint256 dealId, Deal storage deal, uint256 total) private {
+        emit DealCreated(
+            dealId,
+            deal.client,
+            deal.payees[0],
+            deal.arbiter,
+            total,
+            deal.payees,
+            deal.sharesBps,
+            deal.amounts,
+            deal.deadlines,
+            deal.specHashes
+        );
     }
 
     function _deal(uint256 dealId) private view returns (Deal storage deal) {
