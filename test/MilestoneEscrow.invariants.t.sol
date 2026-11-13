@@ -15,6 +15,10 @@ contract EscrowHandler is Test {
 
     uint256 public constant USDC = 1e6;
     uint256 public settledTwice;
+    uint256 public deals;
+    uint256 public releases;
+    uint256 public refunds;
+    uint256 public withdrawals;
     uint256 public creditMismatches;
     uint256 public fundedOutstanding;
     mapping(uint256 => mapping(uint256 => uint256)) public settlements;
@@ -24,7 +28,7 @@ contract EscrowHandler is Test {
         usdc = usdc_;
         arbiter = makeAddr("arbiter");
         for (uint256 i; i < 3; ++i) {
-            address c = makeAddr(string(abi.encodePacked("client", i)));
+            address c = makeAddr(string.concat("client", vm.toString(i)));
             clients.push(c);
             everyone.push(c);
             usdc.mint(c, 10_000_000 * USDC);
@@ -32,7 +36,7 @@ contract EscrowHandler is Test {
             usdc.approve(address(escrow), type(uint256).max);
         }
         for (uint256 i; i < 5; ++i) {
-            address p = makeAddr(string(abi.encodePacked("payee", i)));
+            address p = makeAddr(string.concat("payee", vm.toString(i)));
             team.push(p);
             everyone.push(p);
         }
@@ -76,6 +80,7 @@ contract EscrowHandler is Test {
         vm.prank(client);
         escrow.createDeal(withArbiter ? arbiter : address(0), payees, shares, amounts, deadlines, specs);
         fundedOutstanding += total;
+        deals++;
     }
 
     function release(uint256 dealSeed, uint256 index, bool byArbiter) external {
@@ -87,11 +92,14 @@ contract EscrowHandler is Test {
         address actor = byArbiter && dealArbiter != address(0) ? dealArbiter : client;
 
         uint256 before = _sumClaimable();
+        uint256 clientBefore = escrow.claimable(client);
         vm.prank(actor);
         try escrow.release(dealId, index) {
             _recordSettlement(dealId, index);
             fundedOutstanding -= amounts[index];
+            releases++;
             if (_sumClaimable() - before != amounts[index]) creditMismatches++;
+            if (escrow.claimable(client) != clientBefore) creditMismatches++;
         } catch {}
     }
 
@@ -110,6 +118,7 @@ contract EscrowHandler is Test {
         try escrow.refund(dealId, index) {
             _recordSettlement(dealId, index);
             fundedOutstanding -= amounts[index];
+            refunds++;
             if (escrow.claimable(client) - before != amounts[index]) creditMismatches++;
         } catch {}
     }
@@ -117,7 +126,9 @@ contract EscrowHandler is Test {
     function withdraw(uint256 who) external {
         address actor = everyone[who % everyone.length];
         vm.prank(actor);
-        try escrow.withdraw() {} catch {}
+        try escrow.withdraw() {
+            withdrawals++;
+        } catch {}
     }
 
     function warp(uint32 by) external {
@@ -151,6 +162,18 @@ contract MilestoneEscrowInvariants is Test {
         escrow = new MilestoneEscrow(address(usdc));
         handler = new EscrowHandler(escrow, usdc);
         targetContract(address(handler));
+        bytes4[] memory selectors = new bytes4[](5);
+        selectors[0] = EscrowHandler.createDeal.selector;
+        selectors[1] = EscrowHandler.release.selector;
+        selectors[2] = EscrowHandler.refund.selector;
+        selectors[3] = EscrowHandler.withdraw.selector;
+        selectors[4] = EscrowHandler.warp.selector;
+        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+    }
+
+    function afterInvariant() public view {
+        assertGt(handler.deals(), 0);
+        assertGt(handler.releases() + handler.refunds(), 0);
     }
 
     function invariant_EscrowBalanceCoversClaimableAndFunded() public view {

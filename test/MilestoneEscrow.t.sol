@@ -2,6 +2,7 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {MilestoneEscrow} from "../src/MilestoneEscrow.sol";
+import {FalseUSDC} from "./mocks/FalseUSDC.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 contract MilestoneEscrowTest is Test {
@@ -463,6 +464,79 @@ contract MilestoneEscrowTest is Test {
         vm.stopPrank();
     }
 
+    function test_TransferReturningFalseReverts() public {
+        MilestoneEscrow strict = new MilestoneEscrow(address(new FalseUSDC()));
+        (address[] memory payees, uint16[] memory shares) = _team();
+
+        vm.prank(client);
+        vm.expectRevert(MilestoneEscrow.TransferFailed.selector);
+        strict.createDeal(arbiter, payees, shares, _amounts(), _deadlines(), _specs());
+
+        vm.mockCall(address(strict.token()), abi.encodeWithSelector(FalseUSDC.transferFrom.selector), abi.encode(true));
+        vm.prank(client);
+        uint256 dealId = strict.createDeal(arbiter, payees, shares, _amounts(), _deadlines(), _specs());
+        vm.prank(client);
+        strict.release(dealId, 0);
+
+        vm.prank(dev);
+        vm.expectRevert(MilestoneEscrow.TransferFailed.selector);
+        strict.withdraw();
+        assertEq(strict.claimable(dev), 300 * USDC);
+    }
+
+    function test_SettledMilestoneReportsSettledToTheClientBeforeTheDeadline() public {
+        uint256 dealId = _create();
+        vm.prank(lead);
+        escrow.refund(dealId, 0);
+
+        vm.prank(client);
+        vm.expectRevert(MilestoneEscrow.MilestoneAlreadySettled.selector);
+        escrow.refund(dealId, 0);
+    }
+
+    function test_AcceptsTheLargestAllowedDeal() public {
+        address[] memory payees = new address[](20);
+        uint16[] memory shares = new uint16[](20);
+        for (uint256 i; i < 20; ++i) {
+            payees[i] = address(uint160(0x3000 + i));
+            shares[i] = 500;
+        }
+        uint256[] memory amounts = new uint256[](50);
+        uint64[] memory deadlines = new uint64[](50);
+        bytes32[] memory specs = new bytes32[](50);
+        for (uint256 i; i < 50; ++i) {
+            amounts[i] = USDC;
+            deadlines[i] = START + 1;
+        }
+
+        vm.startPrank(client);
+        uint256 first = escrow.createDeal(arbiter, payees, shares, amounts, deadlines, specs);
+        uint256 second = escrow.createDeal(address(0), payees, shares, amounts, deadlines, specs);
+        escrow.release(second, 49);
+        vm.stopPrank();
+
+        assertEq(first, 1);
+        assertEq(second, 2);
+        assertEq(escrow.claimable(payees[19]), USDC / 20);
+        vm.expectRevert(MilestoneEscrow.DealNotFound.selector);
+        escrow.getDeal(3);
+    }
+
+    function test_SinglePayeeTakesTheWholeMilestone() public {
+        address[] memory payees = new address[](1);
+        payees[0] = lead;
+        uint16[] memory shares = new uint16[](1);
+        shares[0] = 10_000;
+        (uint256[] memory amounts, uint64[] memory deadlines, bytes32[] memory specs) = _single(777);
+
+        vm.startPrank(client);
+        uint256 dealId = escrow.createDeal(address(0), payees, shares, amounts, deadlines, specs);
+        escrow.release(dealId, 0);
+        vm.stopPrank();
+
+        assertEq(escrow.claimable(lead), 777);
+    }
+
     function test_ConstructorRejectsZeroToken() public {
         vm.expectRevert(MilestoneEscrow.ZeroAddress.selector);
         new MilestoneEscrow(address(0));
@@ -526,7 +600,7 @@ contract MilestoneEscrowTest is Test {
         vm.stopPrank();
 
         assertEq(escrow.claimable(lead) + escrow.claimable(dev) + escrow.claimable(designer), amount);
-        assertGe(escrow.claimable(lead), (amount * shareA) / 10_000);
+        assertLe(escrow.claimable(lead) - (amount * shareA) / 10_000, 2);
         assertEq(escrow.claimable(dev), (amount * shareB) / 10_000);
     }
 

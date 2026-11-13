@@ -119,13 +119,11 @@ contract MilestoneEscrow {
 
     function refund(uint256 dealId, uint256 index) external {
         Deal storage deal = _deal(dealId);
-        if (msg.sender == deal.client) {
-            if (index >= deal.deadlines.length) revert MilestoneNotFound();
-            if (block.timestamp <= deal.deadlines[index]) revert MilestoneNotExpired();
-        } else if (msg.sender != deal.payees[0] && msg.sender != deal.arbiter) {
+        if (msg.sender != deal.client && msg.sender != deal.payees[0] && msg.sender != deal.arbiter) {
             revert NotAuthorized();
         }
         uint256 amount = _settle(deal, index, MilestoneState.Refunded);
+        if (msg.sender == deal.client && block.timestamp <= deal.deadlines[index]) revert MilestoneNotExpired();
 
         claimable[deal.client] += amount;
 

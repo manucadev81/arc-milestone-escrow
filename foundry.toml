@@ -12,8 +12,8 @@ runs = 512
 
 [invariant]
 runs = 64
-depth = 48
-fail_on_revert = false
+depth = 64
+fail_on_revert = true
 
 [rpc_endpoints]
 arc = "https://rpc.mainnet.arc.io"
